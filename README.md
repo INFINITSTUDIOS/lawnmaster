@@ -1,36 +1,66 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# LawnMaster
 
-## Getting Started
+Multi-tenant lawn care platform. Landscaping companies sign up, connect their own Stripe
+account, draw service areas on a map, set service days and prices, and get a branded
+site (on a subdomain or their own domain) where customers subscribe to mowing — weekly,
+every 2 or 3 weeks, or monthly — pick a start date, and add flat-rate extras.
 
-First, run the development server:
+Stack: Next.js 16 (App Router) · Supabase (Postgres, Auth, RLS, PostGIS) · Stripe Connect · Mapbox.
+
+## How it fits together
+
+| Host | Serves |
+| --- | --- |
+| `ROOT` (e.g. `lawnmaster.app`) | Marketing, landscaper sign-up, `/dashboard` |
+| `{slug}.ROOT` or a verified custom domain | That company's customer site (`app/site/[domain]`) |
+
+`proxy.ts` routes by hostname. Payments are **direct charges on the company's connected
+Stripe account**; `companies.platform_fee_percent` (default 0) turns on a platform fee.
+Prices are per service area × lawn size × frequency. Visits are generated 8 weeks ahead
+by `/api/cron/generate-visits` (daily, see `vercel.json`).
+
+## Setup
+
+1. `npm install`, then copy `.env.example` to `.env.local` and fill it in.
+2. **Supabase:** apply `supabase/migrations/` to a project (`npx supabase db push`), or run
+   one locally with `npx supabase start` (needs Docker).
+3. **Stripe:** enable Connect on the platform account. Add a webhook endpoint for
+   *events on connected accounts* at `https://ROOT/api/stripe/webhook` with
+   `checkout.session.completed`, `customer.subscription.updated`,
+   `customer.subscription.deleted`, `account.updated`.
+4. **Mapbox:** a public token with the default scopes.
+5. **Vercel:** add `ROOT` and the wildcard `*.ROOT` to the project. Set `VERCEL_API_TOKEN`
+   and `VERCEL_PROJECT_ID` so companies' custom domains can be attached.
+6. `npm run dev` → platform at `http://localhost:3000`, storefronts at `http://{slug}.localhost:3000`.
+
+## Checks
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+npm test            # unit tests (scheduling, pricing, hostnames, geometry)
+npm run typecheck
+npm run lint
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Database tests (tenant isolation, area lookup) against a plain local Postgres + PostGIS:
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```bash
+supabase/tests/run-local.sh
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+End-to-end walkthrough in a browser (needs Playwright, local Supabase, and the app built
+and started with `STRIPE_API_BASE=http://localhost:12111`, `STRIPE_SECRET_KEY=sk_test_mock`,
+`STRIPE_WEBHOOK_SECRET=whsec_e2e_test_secret`):
 
-## Learn More
+```bash
+node e2e/mock-stripe.mjs &
+node e2e/flow.mjs
+```
 
-To learn more about Next.js, take a look at the following resources:
+The e2e run uses a stand-in Stripe server and a mocked geocoder, so it checks this app's
+logic, not Stripe's or Mapbox's real behaviour.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Not in v1
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- Customers changing mowing frequency themselves (they cancel and re-subscribe).
+- Inviting additional managers to a company.
+- Email/SMS notices for visits and failed payments.
